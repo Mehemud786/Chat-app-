@@ -2,8 +2,8 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__, template_folder='../templates')
 
-# In-memory dictionary to hold room messages 
-# Structure: { "1234": [{"sender": "Alice", "text": "Hi everyone!"}] }
+# Temporary in-memory message store 
+# (Note: For permanent storage across serverless reboots, connect a database like KV or Supabase later)
 ROOMS = {}
 
 @app.route('/')
@@ -12,12 +12,14 @@ def index():
 
 @app.route('/api/rooms/join', methods=['POST'])
 def join_room():
-    data = request.json
-    room_code = data.get('room_code')
+    data = request.json or {}
+    room_code = str(data.get('room_code', '')).strip()
     
-    if not room_code or len(str(room_code)) != 4 or not str(room_code).isdigit():
+    # Validate strict 4-digit numeric code
+    if not room_code or len(room_code) != 4 or not room_code.isdigit():
         return jsonify({"error": "Invalid 4-digit room code"}), 400
     
+    # Automatically initialize room if it doesn't exist yet
     if room_code not in ROOMS:
         ROOMS[room_code] = []
         
@@ -32,7 +34,7 @@ def handle_messages(room_code):
         return jsonify({"messages": ROOMS[room_code]})
         
     elif request.method == 'POST':
-        data = request.json
+        data = request.json or {}
         sender = data.get('sender', 'Anonymous')
         text = data.get('text', '')
         
@@ -42,7 +44,7 @@ def handle_messages(room_code):
         message = {"sender": sender, "text": text}
         ROOMS[room_code].append(message)
         
-        # Keep only the last 50 messages per room to limit memory usage
+        # Keep buffer size manageable
         if len(ROOMS[room_code]) > 50:
             ROOMS[room_code].pop(0)
             
