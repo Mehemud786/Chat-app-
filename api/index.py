@@ -1,54 +1,36 @@
-from flask import Flask, render_template, request, jsonify
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import json
 
-app = Flask(__name__, template_folder='../templates')
+app = FastAPI()
 
-# Temporary in-memory message store 
-# (Note: For permanent storage across serverless reboots, connect a database like KV or Supabase later)
-ROOMS = {}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+class ChatMessage(BaseModel):
+    username: str
+    message: str
 
-@app.route('/api/rooms/join', methods=['POST'])
-def join_room():
-    data = request.json or {}
-    room_code = str(data.get('room_code', '')).strip()
-    
-    # Validate strict 4-digit numeric code
-    if not room_code or len(room_code) != 4 or not room_code.isdigit():
-        return jsonify({"error": "Invalid 4-digit room code"}), 400
-    
-    # Automatically initialize room if it doesn't exist yet
-    if room_code not in ROOMS:
-        ROOMS[room_code] = []
-        
-    return jsonify({"success": True, "room_code": room_code})
+# In-memory store for demonstration (Note: Serverless instances can scale/isolate, 
+# use Redis/Supabase for production multi-instance deployments)
+MESSAGE_HISTORY = []
 
-@app.route('/api/rooms/<room_code>/messages', methods=['GET', 'POST'])
-def handle_messages(room_code):
-    if room_code not in ROOMS:
-        ROOMS[room_code] = []
-        
-    if request.method == 'GET':
-        return jsonify({"messages": ROOMS[room_code]})
-        
-    elif request.method == 'POST':
-        data = request.json or {}
-        sender = data.get('sender', 'Anonymous')
-        text = data.get('text', '')
-        
-        if not text.strip():
-            return jsonify({"error": "Message cannot be empty"}), 400
-            
-        message = {"sender": sender, "text": text}
-        ROOMS[room_code].append(message)
-        
-        # Keep buffer size manageable
-        if len(ROOMS[room_code]) > 50:
-            ROOMS[room_code].pop(0)
-            
-        return jsonify({"success": True, "message": message})
+@app.get("/api/messages")
+def get_messages():
+    return {"messages": MESSAGE_HISTORY}
 
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.post("/api/send")
+def send_message(chat: ChatMessage):
+    data = {"username": chat.username, "message": chat.message}
+    MESSAGE_HISTORY.append(data)
+    # Keep only last 50 messages
+    if len(MESSAGE_HISTORY) > 50:
+        MESSAGE_HISTORY.pop(0)
+    return {"status": "success", "data": data}
