@@ -1,51 +1,52 @@
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from pymongo import MongoClient
+from flask import Flask, render_template, request, jsonify
 
-app = FastAPI()
+app = Flask(__name__, template_folder='../templates')
 
-# MongoDB Atlas connection
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-client = MongoClient(MONGO_URI)
-db = client["chatapp_db"]
+# In-memory dictionary to hold room messages 
+# Structure: { "1234": [{"sender": "Alice", "text": "Hi everyone!"}] }
+ROOMS = {}
 
-users_collection = db["users"]
-messages_collection = db["messages"]
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-class UserLogin(BaseModel.model_config = {**BaseModel.model_config}, *, username: str):
-    username: str
-
-class Message(BaseModel):
-    user: str
-    text: str
-
-@app.post("/api/login")
-def login_user(data: UserLogin):
-    username = data.username.strip()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username cannot be empty")
+@app.route('/api/rooms/join', methods=['POST'])
+def join_room():
+    data = request.json
+    room_code = data.get('room_code')
     
-    # Check if user exists in MongoDB, otherwise create them
-    existing_user = users_collection.find_one({"username": username})
-    if not existing_user:
-        users_collection.insert_one({"username": username})
+    if not room_code or len(str(room_code)) != 4 or not str(room_code).isdigit():
+        return jsonify({"error": "Invalid 4-digit room code"}), 400
+    
+    if room_code not in ROOMS:
+        ROOMS[room_code] = []
         
-    return {"status": "success", "username": username}
+    return jsonify({"success": True, "room_code": room_code})
 
-@app.get("/api/messages")
-def get_messages():
-    try:
-        messages = list(messages_collection.find({}, {"_id": 0}).sort("_id", 1).limit(50))
-        return {"messages": messages}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.route('/api/rooms/<room_code>/messages', methods=['GET', 'POST'])
+def handle_messages(room_code):
+    if room_code not in ROOMS:
+        ROOMS[room_code] = []
+        
+    if request.method == 'GET':
+        return jsonify({"messages": ROOMS[room_code]})
+        
+    elif request.method == 'POST':
+        data = request.json
+        sender = data.get('sender', 'Anonymous')
+        text = data.get('text', '')
+        
+        if not text.strip():
+            return jsonify({"error": "Message cannot be empty"}), 400
+            
+        message = {"sender": sender, "text": text}
+        ROOMS[room_code].append(message)
+        
+        # Keep only the last 50 messages per room to limit memory usage
+        if len(ROOMS[room_code]) > 50:
+            ROOMS[room_code].pop(0)
+            
+        return jsonify({"success": True, "message": message})
 
-@app.post("/api/messages")
-def post_message(msg: Message):
-    try:
-        message_data = {"user": msg.user, "text": msg.text}
-        messages_collection.insert_one(message_data)
-        return {"status": "success", "message": message_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+if __name__ == '__main__':
+    app.run(debug=True)
