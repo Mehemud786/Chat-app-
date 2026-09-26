@@ -1,51 +1,92 @@
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from pymongo import MongoClient
+from flask import Flask, render_template_string, request, redirect, url_for
+import uuid
 
-app = FastAPI()
+app = Flask(__name__)
 
-# MongoDB Atlas connection
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-client = MongoClient(MONGO_URI)
-db = client["chatapp_db"]
+# In-memory storage for files/snippets (Note: resets on serverless cold starts)
+file_storage = {}
 
-users_collection = db["users"]
-messages_collection = db["messages"]
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Python File/Text Sharer on Vercel</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input[type="text"], textarea { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background: #0070f3; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0051cc; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
+        .link { word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🚀 Python Share App on Vercel</h2>
+        <form method="POST" action="/api">
+            <label>Title:</label>
+            <input type="text" name="title" required placeholder="e.g., Notes.txt">
+            <label>Content / Text Data:</label>
+            <textarea name="content" rows="5" required placeholder="Type or paste your content here..."></textarea>
+            <button type="submit">Upload / Share</button>
+        </form>
+    </div>
 
-class UserLogin(BaseModel.model_config = {**BaseModel.model_config}, *, username: str):
-    username: str
+    <div class="card">
+        <h3>📂 Shared Files Index</h3>
+        <ul>
+            {% for file_id, data in files.items() %}
+                <li>
+                    <strong>{{ data.title }}</strong> - 
+                    <a href="/api/file/{{ file_id }}">View</a>
+                </li>
+            {% else %}
+                <p>No files shared yet.</p>
+            {% endfor %}
+        </ul>
+    </div>
+</body>
+</html>
+"""
 
-class Message(BaseModel):
-    user: str
-    text: str
+VIEW_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ file.title }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        a { color: #0070f3; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📄 {{ file.title }}</h2>
+        <pre>{{ file.content }}</pre>
+        <br>
+        <a href="/api">← Back to Home</a>
+    </div>
+</body>
+</html>
+"""
 
-@app.post("/api/login")
-def login_user(data: UserLogin):
-    username = data.username.strip()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username cannot be empty")
-    
-    # Check if user exists in MongoDB, otherwise create them
-    existing_user = users_collection.find_one({"username": username})
-    if not existing_user:
-        users_collection.insert_one({"username": username})
-        
-    return {"status": "success", "username": username}
+@app.route('/api', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        title = request.form.get('title')
+        content = request.form.get('content')
+        file_id = str(uuid.uuid4())[:8]
+        file_storage[file_id] = {'title': title, 'content': content}
+        return redirect(url_for('index'))
+    return render_template_string(HTML_TEMPLATE, files=file_storage)
 
-@app.get("/api/messages")
-def get_messages():
-    try:
-        messages = list(messages_collection.find({}, {"_id": 0}).sort("_id", 1).limit(50))
-        return {"messages": messages}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/messages")
-def post_message(msg: Message):
-    try:
-        message_data = {"user": msg.user, "text": msg.text}
-        messages_collection.insert_one(message_data)
-        return {"status": "success", "message": message_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.route('/api/file/<file_id>')
+def view_file(file_id):
+    file_data = file_storage.get(file_id)
+    if not file_data:
+        return "File not found", 404
+    return render_template_string(VIEW_TEMPLATE, file=file_data)
