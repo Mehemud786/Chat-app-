@@ -1,92 +1,78 @@
-from flask import Flask, render_template_string, request, redirect, url_for
-import uuid
+import os
+from flask import Flask, render_template_string, redirect, url_for, send_from_directory, request
 
 app = Flask(__name__)
 
-# In-memory storage for files/snippets (Note: resets on serverless cold starts)
-file_storage = {}
+# Vercel allows writing only to the /tmp directory
+UPLOAD_FOLDER = '/tmp'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Python File/Text Sharer on Vercel</title>
+    <title>Python File Sharing App on Vercel</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        input[type="text"], textarea { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        button { background: #0070f3; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0051cc; }
-        pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
-        .link { word-break: break-all; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9fb; color: #111; }
+        .card { background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h2 { color: #0070f3; margin-top: 0; }
+        input[type="file"] { margin: 15px 0; display: block; }
+        button { background: #0070f3; color: white; border: none; padding: 10px 18px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+        button:hover { background: #0051a2; }
+        ul { padding-left: 20px; }
+        li { margin: 10px 0; }
+        a { color: #0070f3; text-decoration: none; font-weight: 500; }
+        a:hover { text-decoration: underline; }
+        .note { font-size: 12px; color: #666; margin-top: 8px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🚀 Python Share App on Vercel</h2>
-        <form method="POST" action="/api">
-            <label>Title:</label>
-            <input type="text" name="title" required placeholder="e.g., Notes.txt">
-            <label>Content / Text Data:</label>
-            <textarea name="content" rows="5" required placeholder="Type or paste your content here..."></textarea>
-            <button type="submit">Upload / Share</button>
+        <h2>📤 Upload File</h2>
+        <form method="POST" enctype="multipart/form-data" action="/upload">
+            <input type="file" name="file" required>
+            <button type="submit">Upload to Cloud</button>
         </form>
     </div>
-
+    
     <div class="card">
-        <h3>📂 Shared Files Index</h3>
-        <ul>
-            {% for file_id, data in files.items() %}
-                <li>
-                    <strong>{{ data.title }}</strong> - 
-                    <a href="/api/file/{{ file_id }}">View</a>
-                </li>
-            {% else %}
-                <p>No files shared yet.</p>
-            {% endfor %}
-        </ul>
+        <h2>📥 Available Files</h2>
+        {% if files %}
+            <ul>
+                {% for file in files %}
+                    <li><a href="/download/{{ file }}" target="_blank">{{ file }}</a></li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>No files uploaded yet.</p>
+        {% endif %}
+        <p class="note">Note: Files are stored temporarily in serverless ephemeral /tmp storage and may clear out between container restarts.</p>
     </div>
 </body>
 </html>
 """
 
-VIEW_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ file.title }}</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        a { color: #0070f3; text-decoration: none; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>📄 {{ file.title }}</h2>
-        <pre>{{ file.content }}</pre>
-        <br>
-        <a href="/api">← Back to Home</a>
-    </div>
-</body>
-</html>
-"""
-
-@app.route('/api', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    if request.method == 'POST':
-        title = request.form.get('title')
-        content = request.form.get('content')
-        file_id = str(uuid.uuid4())[:8]
-        file_storage[file_id] = {'title': title, 'content': content}
-        return redirect(url_for('index'))
-    return render_template_string(HTML_TEMPLATE, files=file_storage)
+    files = os.listdir(UPLOAD_FOLDER)
+    return render_template_string(HTML_TEMPLATE, files=files)
 
-@app.route('/api/file/<file_id>')
-def view_file(file_id):
-    file_data = file_storage.get(file_id)
-    if not file_data:
-        return "File not found", 404
-    return render_template_string(VIEW_TEMPLATE, file=file_data)
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return redirect(url_for('index'))
+    file = request.files['file']
+    if file.filename == '':
+        return redirect(url_for('index'))
+    if file:
+        filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+        file.save(filepath)
+    return redirect(url_for('index'))
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+
+if __name__ == '__main__':
+    app.run(debug=True)
