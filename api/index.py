@@ -20,21 +20,32 @@ class Message(BaseModel):
     user: str
     text: str
 
-@app.route('/', methods=['GET', 'POST'])
-@app.route('/api', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        title = request.form.get('title')
-        content = request.form.get('content')
-        file_id = str(uuid.uuid4())[:8]
-        file_storage[file_id] = {'title': title, 'content': content}
-        return redirect(url_for('index'))
-    return render_template_string(HTML_TEMPLATE, files=file_storage)
+@app.post("/api/login")
+def login_user(data: UserLogin):
+    username = data.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username cannot be empty")
+    
+    # Check if user exists in MongoDB, otherwise create them
+    existing_user = users_collection.find_one({"username": username})
+    if not existing_user:
+        users_collection.insert_one({"username": username})
+        
+    return {"status": "success", "username": username}
 
-@app.route('/file/<file_id>')
-@app.route('/api/file/<file_id>')
-def view_file(file_id):
-    file_data = file_storage.get(file_id)
-    if not file_data:
-        return "File not found", 404
-    return render_template_string(VIEW_TEMPLATE, file=file_data)
+@app.get("/api/messages")
+def get_messages():
+    try:
+        messages = list(messages_collection.find({}, {"_id": 0}).sort("_id", 1).limit(50))
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/messages")
+def post_message(msg: Message):
+    try:
+        message_data = {"user": msg.user, "text": msg.text}
+        messages_collection.insert_one(message_data)
+        return {"status": "success", "message": message_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
